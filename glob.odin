@@ -22,7 +22,6 @@ Node_Symbol :: enum u8 {
 	Globstar,
 	Any_Char,
 	Any_Text,
-	// Negate,
 }
 Node_Range :: struct {
 	a, b: rune,
