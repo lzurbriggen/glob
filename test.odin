@@ -5,7 +5,7 @@ import "core:testing"
 
 @(test)
 parse_test :: proc(t: ^testing.T) {
-	S :: Tok_Symbol
+	S :: Node_Symbol
 
 	expect_match(t, pattern_from_string(""), {})
 	expect_match(t, pattern_from_string("/"), {S.Slash})
@@ -22,28 +22,28 @@ parse_test :: proc(t: ^testing.T) {
 	)
 	expect_match(t, pattern_from_string("foo/?.bar"), {"foo", S.Slash, S.Any_Char, ".bar"})
 
-	expect_match(t, pattern_from_string("{foo,bar}"), {Tok_Or{patterns = {{"foo"}, {"bar"}}}})
+	expect_match(t, pattern_from_string("{foo,bar}"), {Node_Or{patterns = {{"foo"}, {"bar"}}}})
 	expect_match(
 		t,
 		pattern_from_string("{**/bin,bin}"),
-		{Tok_Or{patterns = {{S.Globstar, S.Slash, "bin"}, {"bin"}}}},
+		{Node_Or{patterns = {{S.Globstar, S.Slash, "bin"}, {"bin"}}}},
 	)
 
 	expect_match(
 		t,
 		pattern_from_string("[ab0-9]"),
-		{Tok_Or{patterns = {{"a"}, {"b"}, {Tok_Range{a = '0', b = '9'}}}}},
+		{Node_Or{patterns = {{"a"}, {"b"}, {Node_Range{a = '0', b = '9'}}}}},
 	)
 	expect_match(
 		t,
 		pattern_from_string("[0-9]"),
-		{Tok_Or{patterns = {{Tok_Range{a = '0', b = '9'}}}}},
+		{Node_Or{patterns = {{Node_Range{a = '0', b = '9'}}}}},
 	)
 
 	expect_match(
 		t,
 		pattern_from_string("[!c]at"),
-		{Tok_Or{patterns = {{"c"}}, negate = true}, "at"},
+		{Node_Or{patterns = {{"c"}}, negate = true}, "at"},
 	)
 }
 
@@ -111,38 +111,38 @@ expect_match :: proc(
 	t: ^testing.T,
 	glob: Pattern,
 	err: Err,
-	expected: []Glob_Token,
+	expected: []Node,
 	loc := #caller_location,
 ) {
 	testing.expect_value(t, err, nil)
-	testing.expect_value(t, len(glob.toks), len(expected), loc)
-	for tok, i in expected {
-		tok_match(t, glob.toks[i], tok, loc)
+	testing.expect_value(t, len(glob.nodes), len(expected), loc)
+	for node, i in expected {
+		node_match(t, glob.nodes[i], node, loc)
 	}
 }
 
 // TODO: easier way to do this?
 @(private)
-tok_match :: proc(t: ^testing.T, a, b: Glob_Token, loc := #caller_location) {
+node_match :: proc(t: ^testing.T, a, b: Node, loc := #caller_location) {
 	switch a in a {
-	case Tok_Or:
-		b, ok := b.(Tok_Or)
+	case Node_Or:
+		b, ok := b.(Node_Or)
 		testing.expect_value(t, ok, true, loc)
 		testing.expect_value(t, a.negate, b.negate, loc)
 		testing.expect_value(t, len(a.patterns), len(b.patterns), loc)
 		for grp, grp_i in a.patterns {
-			for tok, i in grp {
-				tok_match(t, b.patterns[grp_i][i], tok, loc)
+			for node, i in grp {
+				node_match(t, b.patterns[grp_i][i], node, loc)
 			}
 		}
-	case Tok_Range:
+	case Node_Range:
 	// TODO
-	case Tok_Symbol:
-		b, ok := b.(Tok_Symbol)
+	case Node_Symbol:
+		b, ok := b.(Node_Symbol)
 		testing.expect_value(t, ok, true, loc)
 		testing.expect_value(t, a, b, loc)
-	case Tok_Lit:
-		b, ok := b.(Tok_Lit)
+	case Node_Lit:
+		b, ok := b.(Node_Lit)
 		testing.expect_value(t, ok, true, loc)
 		testing.expect_value(t, a, b, loc)
 	}

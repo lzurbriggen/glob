@@ -6,29 +6,29 @@ import "core:unicode/utf8"
 
 Pattern :: struct {
 	arena: virtual.Arena,
-	toks:  []Glob_Token,
+	nodes: []Node,
 }
 
-Glob_Token :: union {
-	Tok_Symbol,
-	Tok_Lit,
-	Tok_Range,
-	Tok_Or,
+Node :: union {
+	Node_Symbol,
+	Node_Lit,
+	Node_Range,
+	Node_Or,
 }
 
-Tok_Lit :: string
-Tok_Symbol :: enum u8 {
+Node_Lit :: string
+Node_Symbol :: enum u8 {
 	Slash,
 	Globstar,
 	Any_Char,
 	Any_Text,
 	// Negate,
 }
-Tok_Range :: struct {
+Node_Range :: struct {
 	a, b: rune,
 }
-Tok_Or :: struct {
-	patterns: [][]Glob_Token,
+Node_Or :: struct {
+	patterns: [][]Node,
 	negate:   bool,
 }
 
@@ -46,15 +46,15 @@ pattern_from_string :: proc(pat: string) -> (glob: Pattern, glob_err: Err) {
 	context.allocator = virtual.arena_allocator(&glob.arena)
 	parser := Parser {
 		runes = utf8.string_to_runes(pat),
-		ast   = make([dynamic]Glob_Token),
+		ast   = make([dynamic]Node),
 	}
 	p := &parser
 
 	for {
-		tok := scan(p) or_break
-		append(&p.ast, tok)
+		node := scan(p) or_break
+		append(&p.ast, node)
 	}
-	glob.toks = p.ast[:]
+	glob.nodes = p.ast[:]
 	return
 }
 
@@ -87,17 +87,17 @@ match_pattern :: proc(prepared: Pattern, input: string) -> bool {
 	context.allocator = alloc
 	runes := utf8.string_to_runes(input)
 	defer delete(runes)
-	_, match_res := _match(prepared.toks, runes)
+	_, match_res := _match(prepared.nodes, runes)
 	return match_res
 }
 
-_match :: proc(prepared: []Glob_Token, runes: []rune) -> (end_idx: int, matched: bool) {
+_match :: proc(prepared: []Node, runes: []rune) -> (end_idx: int, matched: bool) {
 	pos := 0
-	for tok, tok_i in prepared {
+	for node, node_i in prepared {
 		if pos >= len(runes) {return}
 
-		switch t in tok {
-		case Tok_Symbol:
+		switch t in node {
+		case Node_Symbol:
 			switch t {
 			case .Slash:
 				r := runes[pos]
@@ -110,7 +110,7 @@ _match :: proc(prepared: []Glob_Token, runes: []rune) -> (end_idx: int, matched:
 						last_off = i
 						// TODO: are there better solutions than this full eval?
 						if end_idx, matched := _match(
-							prepared[tok_i + 1:],
+							prepared[node_i + 1:],
 							runes[pos + last_off:],
 						); matched {
 							return end_idx, true
@@ -125,7 +125,7 @@ _match :: proc(prepared: []Glob_Token, runes: []rune) -> (end_idx: int, matched:
 						break
 					}
 					// TODO: are there better solutions than this full eval?
-					if end_idx, matched := _match(prepared[tok_i + 1:], runes[pos:]); matched {
+					if end_idx, matched := _match(prepared[node_i + 1:], runes[pos:]); matched {
 						return end_idx, true
 					}
 					pos += 1
@@ -139,7 +139,7 @@ _match :: proc(prepared: []Glob_Token, runes: []rune) -> (end_idx: int, matched:
 			// case .Negate:
 			}
 
-		case Tok_Lit:
+		case Node_Lit:
 			off := 0
 			for r, i in t {
 				if r != runes[pos + i] {return}
@@ -147,14 +147,14 @@ _match :: proc(prepared: []Glob_Token, runes: []rune) -> (end_idx: int, matched:
 			}
 			pos += off
 
-		case Tok_Range:
+		case Node_Range:
 			r := runes[pos]
 			if r < t.a || r > t.b {return}
 			pos += 1
 
-		case Tok_Or:
+		case Node_Or:
 			for grp in t.patterns {
-				if matched_pos, matched := _match(cast([]Glob_Token)grp, runes[pos:]); matched {
+				if matched_pos, matched := _match(cast([]Node)grp, runes[pos:]); matched {
 					if t.negate {
 						return pos, false
 					}
@@ -173,11 +173,11 @@ Parser :: struct {
 	pos:   int,
 	curr:  rune,
 	runes: []rune,
-	ast:   [dynamic]Glob_Token,
+	ast:   [dynamic]Node,
 }
 
 @(private)
-scan :: proc(p: ^Parser, break_on: rune = 0) -> (tok: Glob_Token, tok_ok: bool) {
+scan :: proc(p: ^Parser, break_on: rune = 0) -> (node: Node, node_ok: bool) {
 	r, ok := curr(p)
 	if !ok || (break_on != 0 && r == break_on) {
 		return
@@ -185,35 +185,35 @@ scan :: proc(p: ^Parser, break_on: rune = 0) -> (tok: Glob_Token, tok_ok: bool) 
 	switch r {
 	case '/':
 		adv(p)
-		return Tok_Symbol.Slash, true
+		return Node_Symbol.Slash, true
 	case '*':
 		if nr, ok := adv(p); ok && nr == '*' {
 			adv(p)
-			return Tok_Symbol.Globstar, ok
+			return Node_Symbol.Globstar, ok
 		}
 		return .Any_Text, true
 	case '{':
-		grps := make([dynamic][]Glob_Token)
-		grp := make([dynamic]Glob_Token)
+		grps := make([dynamic][]Node)
+		grp := make([dynamic]Node)
 		adv(p)
 		for {
-			inner_tok, ok := scan(p, ',')
+			inner_node, ok := scan(p, ',')
 			if !ok {
 				// TODO: err
-				log.warn("Failed to read tok")
+				log.warn("Failed to read node")
 				return
 			}
-			append(&grp, inner_tok)
+			append(&grp, inner_node)
 			if r, ok := curr(p); ok {
 				if r == ',' {
 					adv(p)
 					append(&grps, grp[:])
-					grp = make([dynamic]Glob_Token)
+					grp = make([dynamic]Node)
 				}
 				if r == '}' {
 					adv(p)
 					append(&grps, grp[:])
-					return Tok_Or{patterns = grps[:]}, true
+					return Node_Or{patterns = grps[:]}, true
 				}
 			}
 		}
@@ -226,8 +226,8 @@ scan :: proc(p: ^Parser, break_on: rune = 0) -> (tok: Glob_Token, tok_ok: bool) 
 			return
 		}
 		// TODO: alloc
-		groups := make([dynamic][]Glob_Token, context.temp_allocator)
-		range: Maybe(Tok_Range) = nil
+		groups := make([dynamic][]Node, context.temp_allocator)
+		range: Maybe(Node_Range) = nil
 		negate := false
 		i := 0
 		for {
@@ -240,10 +240,10 @@ scan :: proc(p: ^Parser, break_on: rune = 0) -> (tok: Glob_Token, tok_ok: bool) 
 				}
 				if r == ']' {
 					adv(p)
-					return Tok_Or{negate = negate, patterns = groups[:]}, true
+					return Node_Or{negate = negate, patterns = groups[:]}, true
 				}
 				if next(p) == '-' {
-					range = Tok_Range {
+					range = Node_Range {
 						a = r,
 					}
 					adv(p) or_break
@@ -254,8 +254,8 @@ scan :: proc(p: ^Parser, break_on: rune = 0) -> (tok: Glob_Token, tok_ok: bool) 
 			if !escaping && r == '\\' {
 				escaping = true
 			} else {
-				slc := make([]Glob_Token, 1)
-				if ran, ok := range.(Tok_Range); ok {
+				slc := make([]Node, 1)
+				if ran, ok := range.(Node_Range); ok {
 					ran.b = r
 					slc[0] = ran
 				} else {
@@ -280,7 +280,7 @@ scan :: proc(p: ^Parser, break_on: rune = 0) -> (tok: Glob_Token, tok_ok: bool) 
 }
 
 @(private)
-scan_lit :: proc(p: ^Parser, break_on: rune = 0) -> Tok_Lit {
+scan_lit :: proc(p: ^Parser, break_on: rune = 0) -> Node_Lit {
 	escaping := false
 	r, ok := curr(p)
 	if !ok {
