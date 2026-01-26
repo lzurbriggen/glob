@@ -22,12 +22,15 @@ Tok_Symbol :: enum u8 {
 	Globstar,
 	Any_Char,
 	Any_Text,
-	Negate,
+	// Negate,
 }
 Tok_Range :: struct {
 	a, b: rune,
 }
-Tok_Or :: distinct [][]Glob_Token
+Tok_Or :: struct {
+	patterns: [][]Glob_Token,
+	negate:   bool,
+}
 
 Err :: enum {
 	No_Closing_Brace,
@@ -133,7 +136,7 @@ _match :: proc(prepared: []Glob_Token, runes: []rune) -> (end_idx: int, matched:
 				if r == '/' || r == '\\' {return}
 				pos += 1
 
-			case .Negate:
+			// case .Negate:
 			}
 
 		case Tok_Lit:
@@ -150,12 +153,15 @@ _match :: proc(prepared: []Glob_Token, runes: []rune) -> (end_idx: int, matched:
 			pos += 1
 
 		case Tok_Or:
-			for grp in t {
+			for grp in t.patterns {
 				if matched_pos, matched := _match(cast([]Glob_Token)grp, runes[pos:]); matched {
+					if t.negate {
+						return pos, false
+					}
 					return matched_pos, true
 				}
 			}
-			return pos, false
+			return pos, t.negate
 
 		}
 	}
@@ -207,7 +213,7 @@ scan :: proc(p: ^Parser, break_on: rune = 0) -> (tok: Glob_Token, tok_ok: bool) 
 				if r == '}' {
 					adv(p)
 					append(&grps, grp[:])
-					return Tok_Or(grps[:]), true
+					return Tok_Or{patterns = grps[:]}, true
 				}
 			}
 		}
@@ -222,11 +228,19 @@ scan :: proc(p: ^Parser, break_on: rune = 0) -> (tok: Glob_Token, tok_ok: bool) 
 		// TODO: alloc
 		groups := make([dynamic][]Glob_Token, context.temp_allocator)
 		range: Maybe(Tok_Range) = nil
+		negate := false
+		i := 0
 		for {
+			defer i += 1
 			if !escaping {
+				if i == 0 && r == '!' {
+					negate = true
+					r = adv(p) or_break
+					continue
+				}
 				if r == ']' {
 					adv(p)
-					return Tok_Or(groups[:]), true
+					return Tok_Or{negate = negate, patterns = groups[:]}, true
 				}
 				if next(p) == '-' {
 					range = Tok_Range {
@@ -256,9 +270,9 @@ scan :: proc(p: ^Parser, break_on: rune = 0) -> (tok: Glob_Token, tok_ok: bool) 
 	case '?':
 		adv(p)
 		return .Any_Char, ok
-	case '!':
-		adv(p)
-		return .Negate, ok
+	// case '!':
+	// adv(p)
+	// return .Negate, ok
 	case:
 		return scan_lit(p, break_on), true
 	}

@@ -22,20 +22,29 @@ parse_test :: proc(t: ^testing.T) {
 	)
 	expect_match(t, pattern_from_string("foo/?.bar"), {"foo", S.Slash, S.Any_Char, ".bar"})
 
-	expect_match(t, pattern_from_string("{foo,bar}"), {Tok_Or{{"foo"}, {"bar"}}})
+	expect_match(t, pattern_from_string("{foo,bar}"), {Tok_Or{patterns = {{"foo"}, {"bar"}}}})
 	expect_match(
 		t,
 		pattern_from_string("{**/bin,bin}"),
-		{Tok_Or{{S.Globstar, S.Slash, "bin"}, {"bin"}}},
+		{Tok_Or{patterns = {{S.Globstar, S.Slash, "bin"}, {"bin"}}}},
 	)
 
 	expect_match(
 		t,
 		pattern_from_string("[ab0-9]"),
-		{Tok_Or{{"a"}, {"b"}, {Tok_Range{a = '0', b = '9'}}}},
+		{Tok_Or{patterns = {{"a"}, {"b"}, {Tok_Range{a = '0', b = '9'}}}}},
 	)
-	expect_match(t, pattern_from_string("[0-9]"), {Tok_Or{{Tok_Range{a = '0', b = '9'}}}})
+	expect_match(
+		t,
+		pattern_from_string("[0-9]"),
+		{Tok_Or{patterns = {{Tok_Range{a = '0', b = '9'}}}}},
+	)
 
+	expect_match(
+		t,
+		pattern_from_string("[!c]at"),
+		{Tok_Or{patterns = {{"c"}}, negate = true}, "at"},
+	)
 }
 
 @(test)
@@ -89,6 +98,10 @@ match_test :: proc(t: ^testing.T) {
 	testing.expect_value(t, match("[ɐ-ʯ]", "ʰ"), false)
 	testing.expect_value(t, match("[٠-٩]", "٢"), true)
 
+	testing.expect_value(t, match("[!c]at", "at"), true)
+	testing.expect_value(t, match("[!c]at", "bat"), true)
+	testing.expect_value(t, match("[!c]at", "cat"), false)
+
 	testing.expect_value(t, match("/foo/**/[a-zA-Z]elp", "/foo//welp"), true)
 	testing.expect_value(t, match("/foo/**/[a-zA-Z]elp", "/foo/bar/Help"), true)
 }
@@ -115,10 +128,11 @@ tok_match :: proc(t: ^testing.T, a, b: Glob_Token, loc := #caller_location) {
 	case Tok_Or:
 		b, ok := b.(Tok_Or)
 		testing.expect_value(t, ok, true, loc)
-		testing.expect_value(t, len(a), len(b), loc)
-		for grp, grp_i in a {
+		testing.expect_value(t, a.negate, b.negate, loc)
+		testing.expect_value(t, len(a.patterns), len(b.patterns), loc)
+		for grp, grp_i in a.patterns {
 			for tok, i in grp {
-				tok_match(t, a[grp_i][i], tok, loc)
+				tok_match(t, b.patterns[grp_i][i], tok, loc)
 			}
 		}
 	case Tok_Range:
