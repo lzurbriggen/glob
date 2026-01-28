@@ -7,114 +7,127 @@ import "core:testing"
 parse_test :: proc(t: ^testing.T) {
 	S :: Node_Symbol
 
-	expect_match(t, pattern_from_string(""), {})
-	expect_match(t, pattern_from_string("/"), {S.Slash})
-	expect_match(t, pattern_from_string("foo/bar"), {"foo", S.Slash, "bar"})
-	expect_match(
+	expect_parse(t, pattern_from_string(""), {})
+	expect_parse(t, pattern_from_string("/"), {S.Slash})
+	expect_parse(t, pattern_from_string("foo/bar"), {"foo", S.Slash, "bar"})
+	expect_parse(
 		t,
 		pattern_from_string("foo/*/*.bar"),
 		{"foo", S.Slash, S.Any_Text, S.Slash, S.Any_Text, ".bar"},
 	)
-	expect_match(
+	expect_parse(
 		t,
 		pattern_from_string("foo/**/bar"),
 		{"foo", S.Slash, S.Globstar, S.Slash, "bar"},
 	)
-	expect_match(t, pattern_from_string("foo/?.bar"), {"foo", S.Slash, S.Any_Char, ".bar"})
+	expect_parse(t, pattern_from_string("foo/?.bar"), {"foo", S.Slash, S.Any_Char, ".bar"})
 
-	expect_match(t, pattern_from_string("{foo,bar}"), {Node_Or{patterns = {{"foo"}, {"bar"}}}})
-	expect_match(
+	expect_parse(t, pattern_from_string("{foo,bar}"), {Node_Or{patterns = {{"foo"}, {"bar"}}}})
+	expect_parse(
 		t,
 		pattern_from_string("{**/bin,bin}"),
 		{Node_Or{patterns = {{S.Globstar, S.Slash, "bin"}, {"bin"}}}},
 	)
 
-	expect_match(
+	expect_parse(
 		t,
 		pattern_from_string("[ab0-9]"),
 		{Node_Or{patterns = {{"a"}, {"b"}, {Node_Range{a = '0', b = '9'}}}}},
 	)
-	expect_match(
+	expect_parse(
 		t,
 		pattern_from_string("[0-9]"),
 		{Node_Or{patterns = {{Node_Range{a = '0', b = '9'}}}}},
 	)
 
-	expect_match(
+	expect_parse(
 		t,
 		pattern_from_string("[!c]at"),
 		{Node_Or{patterns = {{"c"}}, negate = true}, "at"},
 	)
 }
 
-@(test)
-match_test :: proc(t: ^testing.T) {
-	testing.expect_value(t, match("/**/bin", "/foo/bar/bin"), true)
-	testing.expect_value(t, match("/**/bin", "/foo/bar/hellope"), false)
-	testing.expect_value(t, match("/**/bin", "//bin"), true)
-	testing.expect_value(t, match("/**/bin", "/bin"), false)
-	// TODO: fix
-	testing.expect_value(t, match("**/bin", "/bin"), true)
-	testing.expect_value(t, match("*/bin", "/bin"), true)
-	testing.expect_value(t, match("*/bin", "bin"), false)
-	testing.expect_value(t, match("*/bin", "foo/bin"), true)
-	testing.expect_value(t, match("/*/bin", "/bin"), false)
-	testing.expect_value(t, match("/*/bin", "/foo/bin"), true)
-	testing.expect_value(t, match("/*/bin", "/foo/bar/bin"), false)
-	testing.expect_value(t, match("test/*/hellope", "test/bar/hellope"), true)
-	testing.expect_value(t, match("/**/test/*/hellope", "/foo/test/bar/hellope"), true)
-	testing.expect_value(t, match("?at", "cat"), true)
-	testing.expect_value(t, match("?at", "bat"), true)
-	testing.expect_value(t, match("?at", ".at"), true)
-	testing.expect_value(t, match("?at", ".ar"), false)
-	testing.expect_value(t, match("?at", "/at"), false)
-
-	testing.expect_value(t, match("{b,r}", "bat"), true)
-	testing.expect_value(t, match("{b,r}", "rat"), true)
-	testing.expect_value(t, match("{b,r}", "fat"), false)
-
-	testing.expect_value(t, match("**/foo/{**/bin,bin}", "bar/foo/test/2/bin"), true)
-	testing.expect_value(t, match("**/foo/{**/bin,?bar}", "bar/foo/8bar"), true)
-
-	testing.expect_value(t, match("[abc]", "a"), true)
-	testing.expect_value(t, match("[abc]", "b"), true)
-	testing.expect_value(t, match("[abc]", "c"), true)
-	testing.expect_value(t, match("[abc]", "d"), false)
-	testing.expect_value(t, match("[0-9]", "0"), true)
-	testing.expect_value(t, match("[0-9]", "9"), true)
-	testing.expect_value(t, match("[0-9]", "5"), true)
-	testing.expect_value(t, match("[0-9]", "a"), false)
-	testing.expect_value(t, match("[a-c]", "a"), true)
-	testing.expect_value(t, match("[a-c]", "b"), true)
-	testing.expect_value(t, match("[a-c]", "c"), true)
-	testing.expect_value(t, match("[a-c]", "d"), false)
-
-	testing.expect_value(t, match("[a-c]", "c"), true)
-	testing.expect_value(t, match("[<->]", "<"), true)
-	testing.expect_value(t, match("[<->]", "="), true)
-	testing.expect_value(t, match("[<->]", ">"), true)
-	testing.expect_value(t, match("[<->]", "?"), false)
-	testing.expect_value(t, match("[ɐ-ʯ]", "ʧ"), true)
-	testing.expect_value(t, match("[ɐ-ʯ]", "ʰ"), false)
-	testing.expect_value(t, match("[٠-٩]", "٢"), true)
-
-	testing.expect_value(t, match("[!c]at", "at"), true)
-	testing.expect_value(t, match("[!c]at", "bat"), true)
-	testing.expect_value(t, match("[!c]at", "cat"), false)
-
-	testing.expect_value(t, match("/foo/**/[a-zA-Z]elp", "/foo//welp"), true)
-	testing.expect_value(t, match("/foo/**/[a-zA-Z]elp", "/foo/bar/Help"), true)
-}
-
 @(private)
 expect_match :: proc(
 	t: ^testing.T,
+	pattern: string,
+	expected: string,
+	match_expeced: bool,
+	loc := #caller_location,
+) {
+	matched, err := match(pattern, expected)
+	testing.expect_value(t, err, nil, loc)
+	testing.expect_value(t, matched, match_expeced, loc)
+}
+
+@(test)
+match_test :: proc(t: ^testing.T) {
+	expect_match(t, "/**/bin", "/foo/bar/bin", true)
+	expect_match(t, "/**/bin", "/foo/bar/hellope", false)
+	expect_match(t, "/**/bin", "//bin", true)
+	expect_match(t, "/**/bin", "/bin", false)
+	// TODO: fix
+	expect_match(t, "**/bin", "/bin", true)
+	expect_match(t, "*/bin", "/bin", true)
+	expect_match(t, "*/bin", "bin", false)
+	expect_match(t, "*/bin", "foo/bin", true)
+	expect_match(t, "/*/bin", "/bin", false)
+	expect_match(t, "/*/bin", "/foo/bin", true)
+	expect_match(t, "/*/bin", "/foo/bar/bin", false)
+	expect_match(t, "test/*/hellope", "test/bar/hellope", true)
+	expect_match(t, "/**/test/*/hellope", "/foo/test/bar/hellope", true)
+	expect_match(t, "?at", "cat", true)
+	expect_match(t, "?at", "bat", true)
+	expect_match(t, "?at", ".at", true)
+	expect_match(t, "?at", ".ar", false)
+	expect_match(t, "?at", "/at", false)
+
+	expect_match(t, "{b,r}", "bat", true)
+	expect_match(t, "{b,r}", "rat", true)
+	expect_match(t, "{b,r}", "fat", false)
+
+	expect_match(t, "**/foo/{**/bin,bin}", "bar/foo/test/2/bin", true)
+	expect_match(t, "**/foo/{**/bin,?bar}", "bar/foo/8bar", true)
+
+	expect_match(t, "[abc]", "a", true)
+	expect_match(t, "[abc]", "b", true)
+	expect_match(t, "[abc]", "c", true)
+	expect_match(t, "[abc]", "d", false)
+	expect_match(t, "[0-9]", "0", true)
+	expect_match(t, "[0-9]", "9", true)
+	expect_match(t, "[0-9]", "5", true)
+	expect_match(t, "[0-9]", "a", false)
+	expect_match(t, "[a-c]", "a", true)
+	expect_match(t, "[a-c]", "b", true)
+	expect_match(t, "[a-c]", "c", true)
+	expect_match(t, "[a-c]", "d", false)
+
+	expect_match(t, "[a-c]", "c", true)
+	expect_match(t, "[<->]", "", true)
+	expect_match(t, "[<->]", "", true)
+	expect_match(t, "[<->]", "", true)
+	expect_match(t, "[<->]", "", false)
+	expect_match(t, "[ɐ-ʯ]", "ʧ", true)
+	expect_match(t, "[ɐ-ʯ]", "ʰ", false)
+	expect_match(t, "[٠-٩]", "٢", true)
+
+	expect_match(t, "[!c]at", "at", true)
+	expect_match(t, "[!c]at", "bat", true)
+	expect_match(t, "[!c]at", "cat", false)
+
+	expect_match(t, "/foo/**/[a-zA-Z]elp", "/foo//welp", true)
+	expect_match(t, "/foo/**/[a-zA-Z]elp", "/foo/bar/Help", true)
+}
+
+@(private)
+expect_parse :: proc(
+	t: ^testing.T,
 	glob: Pattern,
-	err: Err,
+	err: Parse_Err,
 	expected: []Node,
 	loc := #caller_location,
 ) {
-	testing.expect_value(t, err, nil)
+	testing.expect_value(t, err, nil, loc)
 	testing.expect_value(t, len(glob.nodes), len(expected), loc)
 	for node, i in expected {
 		node_match(t, glob.nodes[i], node, loc)

@@ -1,6 +1,7 @@
 package glob
 
 import "core:log"
+import "core:math"
 import "core:mem/virtual"
 import "core:unicode/utf8"
 
@@ -31,18 +32,23 @@ Node_Or :: struct {
 	negate:   bool,
 }
 
-Err :: enum {
-	No_Closing_Brace,
-	No_Closing_Bracket,
+Parse_Err :: union {
+	virtual.Allocator_Error,
+	Parse_Err_Expected,
+	Parse_Err_Unexpected_End,
 }
+Parse_Err_Expected :: struct {
+	expected: string,
+	got:      string,
+}
+Parse_Err_Unexpected_End :: struct {}
 
-pattern_from_string :: proc(pat: string) -> (glob: Pattern, glob_err: Err) {
-	err := virtual.arena_init_growing(&glob.arena)
-	if err != nil {
-		// TODO
-		return
+pattern_from_string :: proc(pat: string) -> (pattern: Pattern, parse_err: Parse_Err) {
+	err := virtual.arena_init_growing(&pattern.arena)
+	if err != .None {
+		return pattern, err
 	}
-	context.allocator = virtual.arena_allocator(&glob.arena)
+	context.allocator = virtual.arena_allocator(&pattern.arena)
 	parser := Parser {
 		runes = utf8.string_to_runes(pat),
 		ast   = make([dynamic]Node),
@@ -50,10 +56,16 @@ pattern_from_string :: proc(pat: string) -> (glob: Pattern, glob_err: Err) {
 	p := &parser
 
 	for {
-		node := scan(p) or_break
+		node, err := scan(p)
+		if err != nil {
+			return pattern, err
+		}
+		if node == nil {
+			break
+		}
 		append(&p.ast, node)
 	}
-	glob.nodes = p.ast[:]
+	pattern.nodes = p.ast[:]
 	return
 }
 
@@ -66,20 +78,25 @@ match :: proc {
 	match_pattern,
 }
 
-match_string :: proc(pattern: string, input: string) -> bool {
+match_string :: proc(pattern: string, input: string) -> (bool, Parse_Err) {
 	prep, err := pattern_from_string(pattern)
 	if err != nil {
-		return false
+		return false, err
 	}
 	defer pattern_destroy(&prep)
 	return match_pattern(prep, input)
 }
-match_pattern :: proc(prepared: Pattern, input: string) -> bool {
+match_pattern :: proc(
+	prepared: Pattern,
+	input: string,
+) -> (
+	bool,
+	virtual.Allocator_Error,
+) #optional_allocator_error {
 	arena: virtual.Arena
 	err := virtual.arena_init_growing(&arena)
-	if err != nil {
-		// TODO: err
-		return false
+	if err != .None {
+		return false, err
 	}
 	alloc := virtual.arena_allocator(&arena)
 	defer free_all(alloc)
@@ -87,7 +104,7 @@ match_pattern :: proc(prepared: Pattern, input: string) -> bool {
 	runes := utf8.string_to_runes(input)
 	defer delete(runes)
 	_, match_res := _match(prepared.nodes, runes)
-	return match_res
+	return match_res, nil
 }
 
 _match :: proc(prepared: []Node, runes: []rune) -> (end_idx: int, matched: bool) {
@@ -107,7 +124,6 @@ _match :: proc(prepared: []Node, runes: []rune) -> (end_idx: int, matched: bool)
 				for r, i in runes[pos:] {
 					if r == '/' || r == '\\' {
 						last_off = i
-						// TODO: are there better solutions than this full eval?
 						if end_idx, matched := _match(
 							prepared[node_i + 1:],
 							runes[pos + last_off:],
@@ -123,7 +139,6 @@ _match :: proc(prepared: []Node, runes: []rune) -> (end_idx: int, matched: bool)
 					if r == '/' || r == '\\' {
 						break
 					}
-					// TODO: are there better solutions than this full eval?
 					if end_idx, matched := _match(prepared[node_i + 1:], runes[pos:]); matched {
 						return end_idx, true
 					}
@@ -135,7 +150,6 @@ _match :: proc(prepared: []Node, runes: []rune) -> (end_idx: int, matched: bool)
 				if r == '/' || r == '\\' {return}
 				pos += 1
 
-			// case .Negate:
 			}
 
 		case Node_Lit:
@@ -176,31 +190,29 @@ Parser :: struct {
 }
 
 @(private)
-scan :: proc(p: ^Parser, break_on: rune = 0) -> (node: Node, node_ok: bool) {
+scan :: proc(p: ^Parser, break_on: rune = 0) -> (node: Node, err: Parse_Err) {
 	r, ok := curr(p)
 	if !ok || (break_on != 0 && r == break_on) {
-		return
+		return nil, nil
 	}
 	switch r {
 	case '/':
 		adv(p)
-		return Node_Symbol.Slash, true
+		return Node_Symbol.Slash, nil
 	case '*':
 		if nr, ok := adv(p); ok && nr == '*' {
 			adv(p)
-			return Node_Symbol.Globstar, ok
+			return Node_Symbol.Globstar, nil
 		}
-		return .Any_Text, true
+		return .Any_Text, nil
 	case '{':
 		grps := make([dynamic][]Node)
 		grp := make([dynamic]Node)
 		adv(p)
 		for {
-			inner_node, ok := scan(p, ',')
-			if !ok {
-				// TODO: err
-				log.warn("Failed to read node")
-				return
+			inner_node, inner_err := scan(p, ',')
+			if inner_err != nil {
+				return nil, err
 			}
 			append(&grp, inner_node)
 			if r, ok := curr(p); ok {
@@ -212,20 +224,21 @@ scan :: proc(p: ^Parser, break_on: rune = 0) -> (node: Node, node_ok: bool) {
 				if r == '}' {
 					adv(p)
 					append(&grps, grp[:])
-					return Node_Or{patterns = grps[:]}, true
+					return Node_Or{patterns = grps[:]}, nil
 				}
 			}
 		}
-	// TODO: err
+		return nil, Parse_Err_Expected{expected = "}"}
 	case '[':
 		escaping := false
 		r, ok := adv(p)
 		if !ok {
-			// TODO: err
-			return
+			return nil, Parse_Err_Expected{expected = "]"}
 		}
-		// TODO: alloc
-		groups := make([dynamic][]Node, context.temp_allocator)
+		groups, err := make([dynamic][]Node, context.temp_allocator)
+		if err != .None {
+			return nil, err
+		}
 		range: Maybe(Node_Range) = nil
 		negate := false
 		i := 0
@@ -239,7 +252,7 @@ scan :: proc(p: ^Parser, break_on: rune = 0) -> (node: Node, node_ok: bool) {
 				}
 				if r == ']' {
 					adv(p)
-					return Node_Or{negate = negate, patterns = groups[:]}, true
+					return Node_Or{negate = negate, patterns = groups[:]}, nil
 				}
 				if next(p) == '-' {
 					range = Node_Range {
@@ -265,28 +278,27 @@ scan :: proc(p: ^Parser, break_on: rune = 0) -> (node: Node, node_ok: bool) {
 			}
 			r = adv(p) or_break
 		}
-	// TODO: err
+		return nil, Parse_Err_Expected{expected = "]"}
 	case '?':
 		adv(p)
-		return .Any_Char, ok
-	// case '!':
-	// adv(p)
-	// return .Negate, ok
+		return .Any_Char, nil
 	case:
-		return scan_lit(p, break_on), true
+		return scan_lit(p, break_on)
 	}
 	return
 }
 
 @(private)
-scan_lit :: proc(p: ^Parser, break_on: rune = 0) -> Node_Lit {
+scan_lit :: proc(p: ^Parser, break_on: rune = 0) -> (Node_Lit, Parse_Err) {
 	escaping := false
 	r, ok := curr(p)
 	if !ok {
-		return ""
+		return "", Parse_Err_Unexpected_End{}
 	}
-	// TODO: alloc
-	runes := make([dynamic]rune, context.temp_allocator)
+	runes, err := make([dynamic]rune, context.temp_allocator)
+	if err != .None {
+		return "", err
+	}
 	loop: for {
 		if !escaping {
 			switch r {
@@ -306,7 +318,7 @@ scan_lit :: proc(p: ^Parser, break_on: rune = 0) -> Node_Lit {
 		}
 		r = adv(p) or_break
 	}
-	return utf8.runes_to_string(runes[:])
+	return utf8.runes_to_string(runes[:]), nil
 }
 
 @(private)
