@@ -102,11 +102,12 @@ match_test :: proc(t: ^testing.T) {
 	expect_match(t, "[a-c]", "c", true)
 	expect_match(t, "[a-c]", "d", false)
 
+
 	expect_match(t, "[a-c]", "c", true)
-	expect_match(t, "[<->]", "", true)
-	expect_match(t, "[<->]", "", true)
-	expect_match(t, "[<->]", "", true)
-	expect_match(t, "[<->]", "", false)
+	expect_match(t, "[<->]", "<", true)
+	expect_match(t, "[<->]", "=", true)
+	expect_match(t, "[<->]", ">", true)
+	expect_match(t, "[<->]", "?", false)
 	expect_match(t, "[ɐ-ʯ]", "ʧ", true)
 	expect_match(t, "[ɐ-ʯ]", "ʰ", false)
 	expect_match(t, "[٠-٩]", "٢", true)

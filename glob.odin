@@ -32,10 +32,17 @@ Node_Or :: struct {
 	negate:   bool,
 }
 
-Parse_Err :: union {
+Parse_Err :: union #shared_nil {
+	Maybe(Parse_Err_Pos),
 	virtual.Allocator_Error,
-	Parse_Err_Expected,
-	Parse_Err_Unexpected_End,
+}
+
+Parse_Err_Pos :: struct {
+	pos:     int,
+	details: union {
+		Parse_Err_Expected,
+		Parse_Err_Unexpected_End,
+	},
 }
 Parse_Err_Expected :: struct {
 	expected: string,
@@ -228,12 +235,16 @@ scan :: proc(p: ^Parser, break_on: rune = 0) -> (node: Node, err: Parse_Err) {
 				}
 			}
 		}
-		return nil, Parse_Err_Expected{expected = "}"}
+		return nil, Maybe(Parse_Err_Pos)(
+		Parse_Err_Pos{pos = p.pos, details = Parse_Err_Expected{expected = "}"}},
+		)
 	case '[':
 		escaping := false
 		r, ok := adv(p)
 		if !ok {
-			return nil, Parse_Err_Expected{expected = "]"}
+			return nil, Maybe(Parse_Err_Pos)(
+			Parse_Err_Pos{pos = p.pos, details = Parse_Err_Expected{expected = "]"}},
+			)
 		}
 		groups, err := make([dynamic][]Node, context.temp_allocator)
 		if err != .None {
@@ -278,7 +289,9 @@ scan :: proc(p: ^Parser, break_on: rune = 0) -> (node: Node, err: Parse_Err) {
 			}
 			r = adv(p) or_break
 		}
-		return nil, Parse_Err_Expected{expected = "]"}
+		return nil, Maybe(Parse_Err_Pos)(
+		Parse_Err_Pos{pos = p.pos, details = Parse_Err_Expected{expected = "]"}},
+		)
 	case '?':
 		adv(p)
 		return .Any_Char, nil
@@ -293,7 +306,9 @@ scan_lit :: proc(p: ^Parser, break_on: rune = 0) -> (Node_Lit, Parse_Err) {
 	escaping := false
 	r, ok := curr(p)
 	if !ok {
-		return "", Parse_Err_Unexpected_End{}
+		return "", Maybe(Parse_Err_Pos)(
+		Parse_Err_Pos{pos = p.pos, details = Parse_Err_Unexpected_End{}},
+		)
 	}
 	runes, err := make([dynamic]rune, context.temp_allocator)
 	if err != .None {
