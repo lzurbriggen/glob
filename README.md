@@ -1,6 +1,6 @@
-WIP
-
 Odin library to check if paths match a pattern.
+
+I have no idea if this is a reasonable implementation. I just needed globstar support and this seems to work.
 
 > [!NOTE]
 > For personal use. I will look at issues/PRs at my leisure, or not at all.

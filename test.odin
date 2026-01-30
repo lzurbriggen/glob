@@ -135,7 +135,6 @@ expect_parse :: proc(
 	}
 }
 
-// TODO: easier way to do this?
 @(private)
 node_match :: proc(t: ^testing.T, a, b: Node, loc := #caller_location) {
 	switch a in a {
@@ -150,7 +149,9 @@ node_match :: proc(t: ^testing.T, a, b: Node, loc := #caller_location) {
 			}
 		}
 	case Node_Range:
-	// TODO
+		b, ok := b.(Node_Range)
+		testing.expect_value(t, ok, true, loc)
+		testing.expect_value(t, a, b, loc)
 	case Node_Symbol:
 		b, ok := b.(Node_Symbol)
 		testing.expect_value(t, ok, true, loc)
